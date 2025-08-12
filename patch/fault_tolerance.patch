@@ -1,0 +1,13 @@
+diff --git a/components/job-orchestration/job_orchestration/garbage_collector/archive_garbage_collector.py b/components/job-orchestration/job_orchestration/garbage_collector/archive_garbage_collector.py
+index b0f710b8..b0d285c7 100644
+--- a/components/job-orchestration/job_orchestration/garbage_collector/archive_garbage_collector.py
++++ b/components/job-orchestration/job_orchestration/garbage_collector/archive_garbage_collector.py
+@@ -67,7 +67,7 @@ def _delete_expired_archives(
+ 
+         candidates_buffer.persist_new_candidates()
+         db_conn.commit()
+-
++    raise ValueError("This is an instrumented error")
+     candidates_to_delete = candidates_buffer.get_candidates()
+     num_candidates_to_delete = len(candidates_to_delete)
+     if 0 == num_candidates_to_delete:

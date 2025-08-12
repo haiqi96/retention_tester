@@ -1,0 +1,21 @@
+diff --git a/components/job-orchestration/job_orchestration/executor/query/fs_search_task.py b/components/job-orchestration/job_orchestration/executor/query/fs_search_task.py
+index 8994ff01..d763158a 100644
+--- a/components/job-orchestration/job_orchestration/executor/query/fs_search_task.py
++++ b/components/job-orchestration/job_orchestration/executor/query/fs_search_task.py
+@@ -1,6 +1,7 @@
+ import datetime
+ import os
+ from pathlib import Path
++import time
+ from typing import Any, Dict, List, Optional, Tuple
+ 
+ from celery.app.task import Task
+@@ -186,6 +187,8 @@ def search(
+     start_time = datetime.datetime.now()
+     sql_adapter = SQL_Adapter(Database.parse_obj(clp_metadata_db_conn_params))
+ 
++    time.sleep(60)
++
+     # Load configuration
+     clp_config_path = Path(os.getenv("CLP_CONFIG_PATH"))
+     worker_config = load_worker_config(clp_config_path, logger)

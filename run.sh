@@ -19,6 +19,6 @@ fi
 
 PYTHONPATH=$python_path \
     python3 \
-    tester.py \
+    src/tester.py \
     "$package_path" \
     "$@"
