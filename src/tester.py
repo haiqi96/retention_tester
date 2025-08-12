@@ -560,8 +560,8 @@ def main(argv: List[str]) -> int:
 
     for storage_engine in [StorageEngine.CLP_S, StorageEngine.CLP]:
         base_clp_config.package.storage_engine = str(storage_engine)
-        # test_basic_functionality(clp_home, base_clp_config)
-        # test_fault_tolerance(clp_home, base_clp_config)
+        test_basic_functionality(clp_home, base_clp_config)
+        test_fault_tolerance(clp_home, base_clp_config)
         test_race_condition(clp_home, base_clp_config)
 
     return 0
