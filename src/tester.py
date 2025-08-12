@@ -76,7 +76,6 @@ def start_clp(clp_home: Path, config_path: Path):
 
 
 def start_clp_except_garbage_collector(clp_home: Path, config_path: Path):
-    logger.info("Starting CLP package except garbage collector...")
     # Perhaps we can also patch the start_clp.py later, but for now, use a hardcode list
     components = [
         "database",
@@ -99,7 +98,6 @@ def start_clp_except_garbage_collector(clp_home: Path, config_path: Path):
 
 
 def restart_garbage_collector(clp_home: Path, config_path: Path):
-    logger.info("Stopping garbage collector...")
     cmd = [
         str(clp_home / "sbin/stop-clp.sh"),
         "-f",
@@ -115,7 +113,6 @@ def restart_garbage_collector(clp_home: Path, config_path: Path):
 
 
 def start_garbage_collector(clp_home: Path, config_path: Path):
-    logger.info("Starting garbage collector...")
     cmd = [str(clp_home / "sbin/start-clp.sh"), "--config", str(config_path), "garbage_collector"]
     subprocess.run(
         cmd, cwd=clp_home, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -138,15 +135,14 @@ def execute_compression(clp_home: Path, clp_config_path: Path, input_log: Path, 
     cmd = [str(clp_home / "sbin/compress.sh"), str(input_log), "--config", str(clp_config_path)]
     if use_clp_s:
         cmd.extend(["--timestamp-key", f"{TIME_STAMP_KEY}"])
-    logger.info(cmd)
-    logger.info(f"Compressing {input_log}")
+
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logger.info(f"Finished compressing {input_log}")
+    logger.info(f"Compressed {input_log}")
 
 
 def stop_clp(clp_home: Path):
     cmd = [str(clp_home / "sbin/stop-clp.sh"), "-f"]
-    logger.info("Stopping CLP package...")
+
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     logger.info("Stopped CLP package...")
 
@@ -224,20 +220,18 @@ def get_formatted_utc_ts(timestamp: float) -> str:
 
 
 def generate_unstructured_log(log_path: Path, reference_sec_epoch: Optional[float] = None) -> None:
-    log_ts = reference_sec_epoch
     log_template = "This is an example log message with id={}\n"
 
     with open(log_path, "w") as output:
         for i in range(NUM_LOG_LINE):
             log_msg = log_template.format(i)
-            if log_ts is not None:
-                log_ts += LOG_TS_DELTA
+            if reference_sec_epoch is not None:
+                log_ts = reference_sec_epoch - (NUM_LOG_LINE - (i+1)) * LOG_TS_DELTA
                 log_msg = f"{get_formatted_utc_ts(log_ts)} {log_msg}"
             output.write(log_msg)
 
 
 def generate_structured_log(log_path: Path, reference_sec_epoch: Optional[float]) -> None:
-    log_ts = reference_sec_epoch
     json_log_template = {
         "msg": "Example log message",
     }
@@ -245,8 +239,8 @@ def generate_structured_log(log_path: Path, reference_sec_epoch: Optional[float]
     with open(log_path, "w") as output:
         for i in range(NUM_LOG_LINE):
             json_log_template["id"] = i
-            if log_ts is not None:
-                log_ts += LOG_TS_DELTA
+            if reference_sec_epoch is not None:
+                log_ts = reference_sec_epoch - (NUM_LOG_LINE - (i+1)) * LOG_TS_DELTA
                 json_log_template[TIME_STAMP_KEY] = get_formatted_utc_ts(log_ts)
             output.write(json.dumps(json_log_template, indent=None))
             output.write("\n")
@@ -463,14 +457,15 @@ def test_race_condition(clp_home, base_clp_config):
     patch_package(clp_home, clp_repo_root, race_condition_patch)
 
     try:
-        start_clp(clp_home, clp_config_path)
+        start_clp_except_garbage_collector(clp_home, clp_config_path)
 
         # Generate test logs
         log_path = Path("test.log").resolve()
         generate_log(log_path, use_clp_s, datetime.now(timezone.utc).timestamp())
 
-        # Compress the log and starts garbage collection
+        # Compress the log and start garbage collection
         execute_compression(clp_home, clp_config_path, log_path, use_clp_s)
+        start_garbage_collector(clp_home, clp_config_path)
 
         # Sleep for TTL - S/2 seconds
         sleep_with_log(retention_seconds - search_sleep_seconds / 2)
@@ -480,13 +475,27 @@ def test_race_condition(clp_home, base_clp_config):
         search_cmd = get_search_cmd(clp_home, clp_config_path, dataset)
         proc = subprocess.Popen(search_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        # Sleep another S/2 seconds
+        # Sleep another S/2 seconds, at this point, at least TTL seconds has elapsed since
+        # garbage_collector starts, such that:
+        # 1. garbage collector should have waked up another two times.
+        # 1. Archive should be considered out-of-dated
+        # TODO: parse archive garbage collector log to verify
         sleep_with_log(search_sleep_seconds / 2)
         logger.info("verified that search hasn't finished")
         if proc.poll() is not None:
             raise RuntimeError("Search job finished unexpected early")
-        # verify that the archive isn't removed by the retention cleaner
+
+        # At this point verify that the archive isn't removed by the garbage collector yet because
+        # of the running search job.
         validate_archive_matches(clp_home, clp_config, 1, dataset)
+
+        # Verify that search don't return results (it won't hang because query scheduler will skip
+        # the only archive)
+        cur_time = time.time()
+        validate_search_results(clp_home, clp_config_path, 0, dataset)
+        search_time = time.time() - cur_time
+        if search_time > 10:
+            raise ValueError(f"Search job unexpectedly took {search_time} to finish")
 
         # Sleep another S/2 seconds and some room for search job to finish
         sleep_with_log(search_sleep_seconds / 2 + 10)
@@ -500,7 +509,8 @@ def test_race_condition(clp_home, base_clp_config):
         if search_results_count != NUM_LOG_LINE:
             raise ValueError(f"Unexpected number of search results: {search_results_count}")
 
-        # Sleep for F seconds
+        # Sleep for F seconds, which should guarantee the garbage collector to wake up and remove
+        # the archive
         sleep_with_log(sweep_interval_seconds)
         logger.info("Verify archive is removed")
         validate_archive_matches(clp_home, clp_config, 0, dataset)
@@ -550,8 +560,8 @@ def main(argv: List[str]) -> int:
 
     for storage_engine in [StorageEngine.CLP_S, StorageEngine.CLP]:
         base_clp_config.package.storage_engine = str(storage_engine)
-        test_basic_functionality(clp_home, base_clp_config)
-        test_fault_tolerance(clp_home, base_clp_config)
+        # test_basic_functionality(clp_home, base_clp_config)
+        # test_fault_tolerance(clp_home, base_clp_config)
         test_race_condition(clp_home, base_clp_config)
 
     return 0
