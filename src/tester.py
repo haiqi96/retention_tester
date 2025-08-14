@@ -123,11 +123,11 @@ def start_garbage_collector(clp_home: Path, config_path: Path):
 
 
 def clear_package_storage(clp_config: CLPConfig):
-    logger.info("Cleaning up package storage...")
     if clp_config.logs_directory.exists():
         shutil.rmtree(clp_config.logs_directory)
     if clp_config.data_directory.exists():
         shutil.rmtree(clp_config.data_directory)
+    logger.info("Cleaned up package storage...")
 
 
 def execute_compression(clp_home: Path, clp_config_path: Path, input_log: Path, use_clp_s: bool):
@@ -560,6 +560,7 @@ def main(argv: List[str]) -> int:
 
     for storage_engine in [StorageEngine.CLP_S, StorageEngine.CLP]:
         base_clp_config.package.storage_engine = str(storage_engine)
+        base_clp_config.package.query_engine = str(storage_engine)
         test_basic_functionality(clp_home, base_clp_config)
         test_fault_tolerance(clp_home, base_clp_config)
         test_race_condition(clp_home, base_clp_config)
